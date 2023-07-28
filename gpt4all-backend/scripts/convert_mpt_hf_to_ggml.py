@@ -59,10 +59,7 @@ os.makedirs(dir_out, exist_ok=True)
 #
 # map from ftype to string
 ftype_str = ["f32", "f16"]
-ftype = 1
-if len(sys.argv) > 3:
-    ftype = 0
-
+ftype = 0 if len(sys.argv) > 3 else 1
 tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
 config = AutoConfig.from_pretrained(model_name, trust_remote_code=True)
 hparams = config.to_dict()
@@ -71,51 +68,57 @@ model = AutoModelForCausalLM.from_pretrained(model_name, trust_remote_code=True,
 print("Model loaded: ", model_name)
 
 
-fname_out = dir_out + f"/ggml-model-{model_name.split('/')[-1]}-{ftype_str[ftype]}.bin"
-fout = open(fname_out, "wb")
-vocab = tokenizer.vocab
+fname_out = (
+    f"{dir_out}/ggml-model-{model_name.split('/')[-1]}-{ftype_str[ftype]}.bin"
+)
+with open(fname_out, "wb") as fout:
+    vocab = tokenizer.vocab
 
-hparams["multiple_of"] = 1
-fout.write(struct.pack("I", 0x67676d6d)) # magic: ggml in hex
-fout.write(struct.pack("I", model.config.vocab_size))
-fout.write(struct.pack("I", model.config.max_seq_len))
-fout.write(struct.pack("I", model.config.n_layers))
-fout.write(struct.pack("I", model.config.n_heads))
-fout.write(struct.pack("I", model.config.d_model))
-fout.write(struct.pack("f", model.config.attn_config['alibi_bias_max']))
-clip_qkv = model.config.attn_config['clip_qkv']
-fout.write(struct.pack("f",  clip_qkv if clip_qkv is not None else 0))
-fout.write(struct.pack("I", ftype))
+    hparams["multiple_of"] = 1
+    fout.write(struct.pack("I", 0x67676d6d)) # magic: ggml in hex
+    fout.write(struct.pack("I", model.config.vocab_size))
+    fout.write(struct.pack("I", model.config.max_seq_len))
+    fout.write(struct.pack("I", model.config.n_layers))
+    fout.write(struct.pack("I", model.config.n_heads))
+    fout.write(struct.pack("I", model.config.d_model))
+    fout.write(struct.pack("f", model.config.attn_config['alibi_bias_max']))
+    clip_qkv = model.config.attn_config['clip_qkv']
+    fout.write(struct.pack("f",  clip_qkv if clip_qkv is not None else 0))
+    fout.write(struct.pack("I", ftype))
 
-# # Is this correct??
-# dot_token = tokenizer.encode(".")[0]
-# write tokens to ggml file 
-dot_token = tokenizer.encode('.')[0]
-fout.write(struct.pack("I", model.config.vocab_size))
+    # # Is this correct??
+    # dot_token = tokenizer.encode(".")[0]
+    # write tokens to ggml file 
+    dot_token = tokenizer.encode('.')[0]
+    fout.write(struct.pack("I", model.config.vocab_size))
 
-for i in range(model.config.vocab_size):
-    text = tokenizer.decode([dot_token, i]).encode('utf-8')
-    # remove the first byte (it's always '.')
-    text = text[1:]
-    enclen = len(text)
-    if i in tokenizer.all_special_ids:
-        print(f"special token: {text}")
-        enclen = enclen | 1<<31
-    fout.write(struct.pack("I", enclen))
-    fout.write(text)
-    
-list_vars = model.state_dict()
-for name in list_vars.keys():
-    data = list_vars[name].squeeze().numpy()
-    print("Processing variable: " + name + " with shape: ", data.shape)
+    for i in range(model.config.vocab_size):
+        text = tokenizer.decode([dot_token, i]).encode('utf-8')
+        # remove the first byte (it's always '.')
+        text = text[1:]
+        enclen = len(text)
+        if i in tokenizer.all_special_ids:
+            print(f"special token: {text}")
+            enclen |= 1<<31
+        fout.write(struct.pack("I", enclen))
+        fout.write(text)
 
-    n_dims = len(data.shape);
+    list_vars = model.state_dict()
+    for name in list_vars.keys():
+        data = list_vars[name].squeeze().numpy()
+        print(f"Processing variable: {name} with shape: ", data.shape)
 
-    # ftype == 0 -> float32, ftype == 1 -> float16
-    ftype_cur = 0;
-    if ftype != 0:
-        # Keep token embeddings in fp32
-        if name[-7:] == ".weight" and n_dims == 2 and ".wte" not in name:
+        n_dims = len(data.shape);
+
+        # ftype == 0 -> float32, ftype == 1 -> float16
+        ftype_cur = 0;
+        if ftype == 0:
+            if data.dtype != np.float32:
+                print("  Converting to float32")
+                data = data.astype(np.float32)
+                ftype_cur = 0
+
+        elif name[-7:] == ".weight" and n_dims == 2 and ".wte" not in name:
             print("  Converting to float16")
             data = data.astype(np.float16)
             ftype_cur = 1
@@ -123,23 +126,15 @@ for name in list_vars.keys():
             print("  Converting to float32")
             data = data.astype(np.float32)
             ftype_cur = 0
-    else:
-        if data.dtype != np.float32:
-            print("  Converting to float32")
-            data = data.astype(np.float32)
-            ftype_cur = 0
+        # header
+        str = name.encode('utf-8')
+        fout.write(struct.pack("iii", n_dims, len(str), ftype_cur))
+        for i in range(n_dims):
+            fout.write(struct.pack("i", data.shape[n_dims - 1 - i]))
+        fout.write(str);
 
-    # header
-    str = name.encode('utf-8')
-    fout.write(struct.pack("iii", n_dims, len(str), ftype_cur))
-    for i in range(n_dims):
-        fout.write(struct.pack("i", data.shape[n_dims - 1 - i]))
-    fout.write(str);
+        # data
+        data.tofile(fout)
 
-    # data
-    data.tofile(fout)
-
-fout.close()
-
-print("Done. Output file: " + fname_out)
+print(f"Done. Output file: {fname_out}")
 print("")

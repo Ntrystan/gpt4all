@@ -20,11 +20,8 @@ def test_inference():
 
     assert output_1 == output_2
 
-    tokens = []
-    for token in model.generate('hello', streaming=True):
-        tokens.append(token)
-
-    assert len(tokens) > 0
+    tokens = list(model.generate('hello', streaming=True))
+    assert tokens
 
     with model.chat_session():
         tokens = list(model.generate(prompt='hello', top_k=1, streaming=True))

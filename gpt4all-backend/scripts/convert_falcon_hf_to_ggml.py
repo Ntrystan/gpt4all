@@ -64,10 +64,7 @@ os.makedirs(dir_out, exist_ok=True)
 #
 # map from ftype to string
 ftype_str = ["f32", "f16"]
-ftype = 1
-if len(sys.argv) > 3:
-    ftype = 0
-
+ftype = 0 if len(sys.argv) > 3 else 1
 tokenizer = AutoTokenizer.from_pretrained(dir_model)
 # print(tokenizer)
 config = AutoConfig.from_pretrained(dir_model, trust_remote_code=True)
@@ -79,65 +76,65 @@ n_head_kv = hparams["n_head_kv"] if "n_head_kv" in hparams else 1
 head_dim = hparams["hidden_size"] // n_head
 print("* Loading model from: ", dir_model)
 
-fname_out = dir_out + f"/ggml-model-{dir_model.split('/')[-1]}-{ftype_str[ftype]}.bin"
-fout = open(fname_out, "wb")
-fout.write(struct.pack("i", 0x67676a74)) # magic: ggmf in hex (version 1) - possibly change to ggfc ?
-fout.write(struct.pack("i", 1)) # version
-fout.write(struct.pack("i", hparams["vocab_size"]))
-fout.write(struct.pack("i", hparams["hidden_size"]))
-fout.write(struct.pack("i", n_head))
-fout.write(struct.pack("i", n_head_kv))
-fout.write(struct.pack("i", hparams["n_layer"]))
-fout.write(struct.pack("i", 40 if "n_head_kv" in hparams else 7)) # obsolete field that breaks ggml compatibility - todo again remove one day
-fout.write(struct.pack("i", ftype))
+fname_out = (
+    f"{dir_out}/ggml-model-{dir_model.split('/')[-1]}-{ftype_str[ftype]}.bin"
+)
+with open(fname_out, "wb") as fout:
+    fout.write(struct.pack("i", 0x67676a74)) # magic: ggmf in hex (version 1) - possibly change to ggfc ?
+    fout.write(struct.pack("i", 1)) # version
+    fout.write(struct.pack("i", hparams["vocab_size"]))
+    fout.write(struct.pack("i", hparams["hidden_size"]))
+    fout.write(struct.pack("i", n_head))
+    fout.write(struct.pack("i", n_head_kv))
+    fout.write(struct.pack("i", hparams["n_layer"]))
+    fout.write(struct.pack("i", 40 if "n_head_kv" in hparams else 7)) # obsolete field that breaks ggml compatibility - todo again remove one day
+    fout.write(struct.pack("i", ftype))
 
-reverse_vocab = {id: encoded_tok for encoded_tok, id in tokenizer.vocab.items()}
-byte_encoder = bytes_to_unicode()
-byte_decoder = {v:k for k, v in byte_encoder.items()}
+    reverse_vocab = {id: encoded_tok for encoded_tok, id in tokenizer.vocab.items()}
+    byte_encoder = bytes_to_unicode()
+    byte_decoder = {v:k for k, v in byte_encoder.items()}
 
-for i in range(hparams["vocab_size"]):
-    text = bytearray([byte_decoder[c] for c in reverse_vocab[i]])
-    fout.write(struct.pack("i", len(text)))
-    fout.write(text)
-    fout.write(struct.pack("f", 0.0)) # falcon uses bpe on RefinedWeb - no probability scores used
+    for i in range(hparams["vocab_size"]):
+        text = bytearray([byte_decoder[c] for c in reverse_vocab[i]])
+        fout.write(struct.pack("i", len(text)))
+        fout.write(text)
+        fout.write(struct.pack("f", 0.0)) # falcon uses bpe on RefinedWeb - no probability scores used
 
-model = model.state_dict()
-for name in model.keys():
-    src = name
-    # The original query_key_value tensor contains n_head_kv "kv groups",
-    # each consisting of n_head/n_head_kv query weights followed by one key
-    # and one value weight (shared by all query heads in the kv group).
-    # This layout makes it a big pain to work with in GGML.
-    # So we rearrange them here,, so that we have n_head query weights
-    # followed by n_head_kv key weights followed by n_head_kv value weights,
-    # in contiguous fashion.
+    model = model.state_dict()
+    for name in model.keys():
+        src = name
+        # The original query_key_value tensor contains n_head_kv "kv groups",
+        # each consisting of n_head/n_head_kv query weights followed by one key
+        # and one value weight (shared by all query heads in the kv group).
+        # This layout makes it a big pain to work with in GGML.
+        # So we rearrange them here,, so that we have n_head query weights
+        # followed by n_head_kv key weights followed by n_head_kv value weights,
+        # in contiguous fashion.
 
-    if "query_key_value" in src:
-        qkv = model[src].view(
-            n_head_kv, n_head // n_head_kv + 2, head_dim, head_dim * n_head)
+        if "query_key_value" in src:
+            qkv = model[src].view(
+                n_head_kv, n_head // n_head_kv + 2, head_dim, head_dim * n_head)
 
-        q = qkv[:, :-2 ].reshape(n_head * head_dim, head_dim * n_head)
-        k = qkv[:, [-2]].reshape(n_head_kv * head_dim, head_dim * n_head)
-        v = qkv[:, [-1]].reshape(n_head_kv * head_dim, head_dim * n_head)
+            q = qkv[:, :-2 ].reshape(n_head * head_dim, head_dim * n_head)
+            k = qkv[:, [-2]].reshape(n_head_kv * head_dim, head_dim * n_head)
+            v = qkv[:, [-1]].reshape(n_head_kv * head_dim, head_dim * n_head)
 
-        model[src] = torch.cat((q,k,v)).reshape_as(model[src])
-    data = model[src].squeeze()
-    n_dims = len(data.shape)
-    # default type is fp32
-    ftype_cur = 1 if ftype == 1 and n_dims > 1 else 0
-    data = data.to(dtype = torch.float16 if ftype_cur == 1 else torch.float32).numpy()
-    print(f'  |', name, data.shape, '->', data.dtype)
-    # header
-    str = name.encode('utf-8')
-    fout.write(struct.pack("iii", n_dims, len(str), ftype_cur))
-    for i in range(n_dims):
-        fout.write(struct.pack("i", data.shape[n_dims - 1 - i]))
-    fout.write(str)
+            model[src] = torch.cat((q,k,v)).reshape_as(model[src])
+        data = model[src].squeeze()
+        n_dims = len(data.shape)
+        # default type is fp32
+        ftype_cur = 1 if ftype == 1 and n_dims > 1 else 0
+        data = data.to(dtype = torch.float16 if ftype_cur == 1 else torch.float32).numpy()
+        print('  |', name, data.shape, '->', data.dtype)
+        # header
+        str = name.encode('utf-8')
+        fout.write(struct.pack("iii", n_dims, len(str), ftype_cur))
+        for i in range(n_dims):
+            fout.write(struct.pack("i", data.shape[n_dims - 1 - i]))
+        fout.write(str)
 
-    # data
-    data.tofile(fout)
+        # data
+        data.tofile(fout)
 
-fout.close()
-
-print("Done. Output file: " + fname_out)
+print(f"Done. Output file: {fname_out}")
 print("")
