@@ -29,7 +29,6 @@ async def list_engines():
     https://raw.githubusercontent.com/nomic-ai/gpt4all/main/gpt4all-chat/metadata/models.json
     '''
     raise NotImplementedError()
-    return ListEnginesResponse(data=[])
 
 
 @router.get("/{engine_id}", response_model=EngineResponse)
@@ -37,4 +36,3 @@ async def retrieve_engine(engine_id: str):
     ''' '''
 
     raise NotImplementedError()
-    return EngineResponse()

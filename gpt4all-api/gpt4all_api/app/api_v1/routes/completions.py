@@ -120,8 +120,7 @@ async def completions(request: CompletionRequest):
         if isinstance(request.prompt, list):
             tasks = []
             for prompt in request.prompt:
-                payload = {"parameters": params}
-                payload["inputs"] = prompt
+                payload = {"parameters": params, "inputs": prompt}
                 task = gpu_infer(payload, header)
                 tasks.append(task)
             results = await asyncio.gather(*tasks)
@@ -146,10 +145,7 @@ async def completions(request: CompletionRequest):
             )
 
         else:
-            payload = {"parameters": params}
-            # If streaming, we need to return a StreamingResponse
-            payload["inputs"] = request.prompt
-
+            payload = {"parameters": params, "inputs": request.prompt}
             resp = await gpu_infer(payload, header)
 
             output = resp["generated_text"]
@@ -186,17 +182,7 @@ async def completions(request: CompletionRequest):
                                 temp=request.temperature,
                                 )
 
-        # If streaming, we need to return a StreamingResponse
-        if request.stream:
-            base_chunk = CompletionStreamResponse(
-                id=str(uuid4()),
-                created=time.time(),
-                model=request.model,
-                choices=[]
-            )
-            return StreamingResponse((response for response in stream_completion(output, base_chunk)),
-                                     media_type="text/event-stream")
-        else:
+        if not request.stream:
             return CompletionResponse(
                 id=str(uuid4()),
                 created=time.time(),
@@ -213,3 +199,13 @@ async def completions(request: CompletionRequest):
                     'total_tokens': 0
                 }
             )
+        base_chunk = CompletionStreamResponse(
+            id=str(uuid4()),
+            created=time.time(),
+            model=request.model,
+            choices=[]
+        )
+        return StreamingResponse(
+            iter(stream_completion(output, base_chunk)),
+            media_type="text/event-stream",
+        )

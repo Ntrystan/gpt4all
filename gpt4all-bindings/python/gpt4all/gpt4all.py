@@ -199,9 +199,7 @@ class GPT4All:
         """
 
         def get_download_url(model_filename):
-            if url:
-                return url
-            return f"https://gpt4all.io/models/{model_filename}"
+            return url if url else f"https://gpt4all.io/models/{model_filename}"
 
         # Download model
         download_path = os.path.join(model_path, model_filename).replace("\\", "\\\\")

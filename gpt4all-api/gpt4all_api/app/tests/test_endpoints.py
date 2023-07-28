@@ -19,8 +19,9 @@ def test_completion():
 def test_streaming_completion():
     model = "ggml-mpt-7b-chat.bin"
     prompt = "Who is Michael Jordan?"
-    tokens = []
-    for resp in openai.Completion.create(
+    tokens = [
+        resp.choices[0].text
+        for resp in openai.Completion.create(
             model=model,
             prompt=prompt,
             max_tokens=50,
@@ -28,10 +29,10 @@ def test_streaming_completion():
             top_p=0.95,
             n=1,
             echo=True,
-            stream=True):
-        tokens.append(resp.choices[0].text)
-
-    assert (len(tokens) > 0)
+            stream=True,
+        )
+    ]
+    assert tokens
     assert (len("".join(tokens)) > len(prompt))
 
 

@@ -33,13 +33,14 @@ def sign_dmg(input_dmg: str, output_dmg: str, signing_identity: Optional[str] = 
     shutil.copytree(mount_point, os.path.join(temp_dir, 'contents'))
     subprocess.run(['hdiutil', 'detach', mount_point])
 
-    # Find the .app bundle in the temporary folder
-    app_bundle = None
-    for item in os.listdir(os.path.join(temp_dir, 'contents')):
-        if item.endswith('.app'):
-            app_bundle = os.path.join(temp_dir, 'contents', item)
-            break
-
+    app_bundle = next(
+        (
+            os.path.join(temp_dir, 'contents', item)
+            for item in os.listdir(os.path.join(temp_dir, 'contents'))
+            if item.endswith('.app')
+        ),
+        None,
+    )
     if not app_bundle:
         print('No .app bundle found in the DMG.')
         exit(1)

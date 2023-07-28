@@ -194,10 +194,7 @@ class LLModel:
         filename = os.path.basename(model_path)
         self.model_name = os.path.splitext(filename)[0]
 
-        if llmodel.llmodel_isModelLoaded(self.model):
-            return True
-        else:
-            return False
+        return bool(llmodel.llmodel_isModelLoaded(self.model))
 
     def set_thread_count(self, n_threads):
         if not llmodel.llmodel_isModelLoaded(self.model):

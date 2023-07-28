@@ -43,7 +43,7 @@ def tokenize_inputs(config, tokenizer, examples):
             labels = torch.cat([labels, torch.full((max_length - len(labels),), -100)])
 
         assert (labels == -100).sum() < len(labels), f"Labels are all -100, something wrong. prompt length {prompt_len} exceeds max length {max_length}" 
-        
+
         if (labels == -100).sum() == len(labels) - 1:
             print(prompt)
             print(response)
@@ -54,9 +54,9 @@ def tokenize_inputs(config, tokenizer, examples):
         out["input_ids"].append(padded["input_ids"])
         out["attention_mask"].append(padded["attention_mask"])
 
-    out = {k: torch.stack(v) if isinstance(v, list) else v for k, v in out.items()}
-
-    return out
+    return {
+        k: torch.stack(v) if isinstance(v, list) else v for k, v in out.items()
+    }
 
 
 def load_data(config, tokenizer):
